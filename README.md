@@ -17,6 +17,8 @@ Tab3: 人脸匹配
 
 
 ## B:移动互联数据的存储及计算训练（后端配置）
+我们组选择使用python+flask的框架进行后端配置，详情参见附件中的test.py
+
 返回的json由三部分组成，’code’+’data’+’message’。
 Code代表了错误的形式。<br> 
 100代表前后端交互正确，无错误。<br> 
@@ -109,8 +111,29 @@ make
 wget https://pjreddie.com/media/files/yolo.weights
 ```
 
-然后将yolo的分类封装成 darknet.py,用于直播端进行调用。
-在darknet.py中设置好默认的模型与参数后可直接进行使用，最后返回的是输出的预测结果与边界框的坐标。
+然后将yolo的分类封装成 darknet.py,用于直播端进行调用，在darknet.py中，最重要的函数为detect函数，如下所示。
+```Python
+def detect(net, meta, image, thresh=.5, hier_thresh=.5, nms=.45):
+    im = load_image(image, 0, 0)
+    num = c_int(0)
+    pnum = pointer(num)
+    predict_image(net, im)
+    dets = get_network_boxes(net, im.w, im.h, thresh, hier_thresh, None, 0, pnum)
+    num = pnum[0]
+    if (nms): do_nms_obj(dets, num, meta.classes, nms);
+
+    res = []
+    for j in range(num):
+        for i in range(meta.classes):
+            if dets[j].prob[i] > 0:
+                b = dets[j].bbox
+                res.append((meta.names[i], dets[j].prob[i], (b.x, b.y, b.w, b.h)))
+    res = sorted(res, key=lambda x: -x[1])
+    free_image(im)
+    free_detections(dets, num)
+    return res
+```
+在darknet.py中设置好默认的模型与参数后可直接进行使用(由于服务器性能原因，在我们组的实验中均适用yolo2进行图像处理），最后返回的是输出的预测结果与边界框的坐标。
 ```
 Loading weights from /home/ubuntu/EE373/darknet/yolo.weights...Done!
 [(b'bicycle', 0.8530982136726379, (341.83966064453125, 285.84002685546875, 492.8941650390625, 323.5599060058594)), 
@@ -120,8 +143,47 @@ Loading weights from /home/ubuntu/EE373/darknet/yolo.weights...Done!
 (b'truck', 0.6359090805053711, (574.128173828125, 126.13597869873047, 212.53976440429688, 83.70970153808594))]
 ```
 ### 直播环境的搭建
-搭建好直播环境后（组员利用了在别的课配置好的阿里云服务器），利用opencv内置的ffmpeg的包可以用来读取rtmp和rtsp流，在ipcamera.py中import我们yolo部分封装好的darknet.py，对视频流每10s进行一次一次抽帧后将图片交给darknet.py的detect函数，返回预测结果与框的位置，然后用ipcamera中定义的process_yolo将这些信息画在图片上。
-
+搭建好直播环境后（组员利用了在别的课配置好的阿里云服务器），利用opencv内置的ffmpeg的包可以用来读取rtmp和rtsp流，在ipcamera.py中import我们yolo部分封装好的darknet.py，对视频流每10s进行一次一次抽帧后将图片交给darknet.py的detect函数，返回预测结果与框的位置，然后用ipcamera中定义的process_yolo函数将这些信息画在图片上, 关键部分的代码如下所示。
+```Python
+def process_yolo(yolo_out,img):
+    l=len(yolo_out)
+    for i in range(l):
+        tmp=yolo_out[i];#相当于一个tuple like ('cat',0.84,(1,2,3,4))第一个为class第二个为概率第三个里面是bbox
+        classes=str(tmp[0], encoding = "utf-8")  
+        prob=tmp[1]
+        bbox=tmp[2]
+        img=addlayer(img,bbox,classes,prob)#将这些信息画在原始图片上
+    return(img)
+```
+```Python
+while cap.isOpened():
+    success,frame = cap.read()
+    if success:
+        '''
+		对frame进行识别处理
+		'''
+        frame_out=frame
+        end_time=time.time()
+        if end_time-start_time>2:#每过十秒读取一次
+            
+            n=n+1
+            saving_path='/home/ubuntu/EE373/zhiboimg/'+str(n)+'.jpg'
+            cv2.imwrite(saving_path,frame)#没高兴做直接的流处理而是每十秒保存一张图片
+            # frame_out=frame
+            r = darknet.detect(net, meta, saving_path.encode('utf-8'))
+            # net=load_net("cfg/tiny-yolo.cfg","tiny-yolo.weights",0)
+            # meta=load_meta("cfg/coco.data")
+            # r=detect(net,meta,"zhiboimg/"+str(n)+'.jpg')
+            # 运行yolo
+            frame_out=process_yolo(r,frame)
+            print(r)
+            cv2.imwrite('/home/ubuntu/EE373/zhiboout/'+str(n)+'.jpg',frame_out)
+            start_time=time.time()
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break    
+        
+        pipe.stdin.write(frame_out.tostring())
+```
 ### 小车的控制和避障
 1.	首先利用车载相机对车辆周边的图像进行采集。由于在摄像机拍摄视频的过程中，因为摄像头抖动和天气状况等原因，我们需要对采集的图像进行预处理（滤波，边缘检测，区域分割等），用来提高图像的质量和识别的准确度。
 2.	通过简单的特征来检测车道线，找到可行驶区域。
