@@ -185,13 +185,69 @@ while cap.isOpened():
         pipe.stdin.write(frame_out.tostring())
 ```
 ### 小车的控制和避障
-1.	首先利用车载相机对车辆周边的图像进行采集。由于在摄像机拍摄视频的过程中，因为摄像头抖动和天气状况等原因，我们需要对采集的图像进行预处理（滤波，边缘检测，区域分割等），用来提高图像的质量和识别的准确度。
-2.	通过简单的特征来检测车道线，找到可行驶区域。
-3.	无人驾驶的避障主要分为3部分:
+无人驾驶决策控制系统的任务就是根据给定的路网文件、获取的交通环境信息和自身行驶状态，将行为预测、路径规划以及避障机制三者结合起来，自主产生合理驾驶决策，实时完成无人驾驶动作规划。狭义上来讲，包含了无人驾驶车的行为决策、动作规划以及反馈控制模块；广义上来讲，还紧密依赖上游的路由寻径、交通预测模块的计算结果。
+对于自动小车驾驶，我们仅从狭义考虑，可以大致分为三个阶段：
+行为决策，任务是汇聚分析各种信息，做出行驶的决策，确定无人驾驶汽车应该进入什么行驶模式，比如路口左转模式、超车模式等，与上游模块信息相连。
+动作规划，任务是将行为决策的宏观指令解释成一条带有时间信息的轨迹曲线，来给最底层的反馈控制来进行实际对车的操作；
+反馈控制，任务是控制车辆尽可能遵循上游动作规划所输出的轨迹，通过控制方向盘转角以及前进速度实现。
+行为决策
+大概分成四个步骤：
+1.	结合我车状态，地图数据，感知结果构建不同层次的场景。
+2.	每个场景根据自身规则（交通法规，安全避让），计算出每个场景的个体决策。
+3.	检查各个场景有无冲突，并解决（安全验证）。
+4.	在统一的时空里，推演所有决策能否汇总成安全无碰的综合决策，最后发送给动作规划模块。
+反馈控制（自动控制模块）
+输入：为局部路径、车辆状态、车辆位置和终端命令
+输出：为油门、刹车和转向等操作（一般来说，路径、时间、地点都是决策和规划层设计好的，控制层只要完成这些目标就可以）
+基本控制内容：横向控制（MPC算法）和纵向控制（PID算法）
+主要的控制命令输出：
+```
+// next id : 27
 
-a.运动障碍物检测：对运动过程中环境中的运动障碍物进行检测,主要由车载环境感知系统完成。（很明显，避开障碍物的第一步就是检测障碍物。）
-
-b.运动障碍物碰撞轨迹预测：对运动过程中可能遇到的障碍物进行可能性评级与预测,判断与无人驾驶车辆的碰撞关系。（当你检测到障碍物后，你就得让机器判断是否会与汽车相撞）
-
-c.运动障碍物避障：通过智能决策和路径规划,使无人驾驶车辆安全避障,由车辆路径决策系统执行。（判断了可能会与汽车发生碰撞的障碍物后，你就得去让机器做出决策来避障了）
+message ControlCommand {
+  optional apollo.common.Header header = 1;
+  // target throttle in percentage [0, 100]
+  optional double throttle = 3;
+  // target brake in percentage [0, 100]
+  optional double brake = 4;
+  // target non-directional steering rate, in percentage of full scale per
+  // second [0, 100]
+  optional double steering_rate = 6;
+  // target steering angle, in percentage of full scale [-100, 100]
+  optional double steering_target = 7;
+  // parking brake engage. true: engaged
+  optional bool parking_brake = 8;
+  // target speed, in m/s
+  optional double speed = 9;
+  // target acceleration in m`s^-2
+  optional double acceleration = 10;
+  // model reset
+  optional bool reset_model = 16 [deprecated = true];
+  // engine on/off, true: engine on
+  optional bool engine_on_off = 17;
+  // completion percentage of trajectory planned in last cycle
+  optional double trajectory_fraction = 18;
+  optional apollo.canbus.Chassis.DrivingMode driving_mode = 19
+      [deprecated = true];
+  optional apollo.canbus.Chassis.GearPosition gear_location = 20;
+  optional Debug debug = 22;
+  optional apollo.common.VehicleSignal signal = 23;
+  optional LatencyStats latency_stats = 24;
+  optional PadMessage pad_msg = 25;
+  optional apollo.common.EngageAdvice engage_advice = 26;
+  optional bool is_in_safe_mode = 27 [default = false];
+  // deprecated fields
+  optional bool left_turn = 13 [deprecated = true];
+  optional bool right_turn = 14 [deprecated = true];
+  optional bool high_beam = 11 [deprecated = true];
+  optional bool low_beam = 12 [deprecated = true];
+  optional bool horn = 15 [deprecated = true];
+  optional TurnSignal turnsignal = 21 [deprecated = true];
+}
+```
+避障机制
+1.	运动障碍物检测：对运动过程中环境中的运动障碍物进行检测,主要由车载环境感知系统完成。（很明显，从常识角度看，避开障碍物的第一步就是检测障碍物。）
+2.	运动障碍物碰撞轨迹预测：对运动过程中可能遇到的障碍物进行可能性评级与预测,判断与无人驾驶车辆的碰撞关系。（当你检测到障碍物后，你就得让机器判断是否会与汽车相撞）
+3.	运动障碍物避障：通过智能决策和路径规划,使无人驾驶车辆安全避障,由车辆路径决策系统执行。（判断了可能会与汽车发生碰撞的障碍物后，你就得去让机器做出决策来避障了）
+前两项本质上是多目标识别和追踪，运动障碍物的避障本质上是一个路径规划的过程，在路段上有未知障碍物的情况下,按照一定的评价标准,寻找一条从起始状态到目标状态的无碰撞路径。
 
