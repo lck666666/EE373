@@ -143,7 +143,7 @@ Loading weights from /home/ubuntu/EE373/darknet/yolo.weights...Done!
 (b'truck', 0.6359090805053711, (574.128173828125, 126.13597869873047, 212.53976440429688, 83.70970153808594))]
 ```
 ### 直播环境的搭建
-搭建好直播环境后（组员利用了在别的课配置好的阿里云服务器），利用opencv内置的ffmpeg的包可以用来读取rtmp和rtsp流，在ipcamera.py中import我们yolo部分封装好的darknet.py，对视频流每10s进行一次一次抽帧后将图片交给darknet.py的detect函数，返回预测结果与框的位置，然后用ipcamera中定义的process_yolo函数将这些信息画在图片上, 关键部分的代码如下所示。
+搭建好直播环境后（组员利用了在别的课配置好的阿里云服务器），利用opencv内置的ffmpeg的包可以用来读取rtmp和rtsp流，在ipcamera.py中import我们yolo部分封装好的darknet.py，对视频流每10s进行一次抽帧后将图片交给darknet.py的detect函数，返回预测结果与框的位置，然后用ipcamera中定义的process_yolo函数将这些信息画在图片上, 关键部分的代码如下所示。
 ```Python
 def process_yolo(yolo_out,img):
     l=len(yolo_out)
